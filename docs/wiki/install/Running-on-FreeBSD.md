@@ -2,21 +2,24 @@ On [FreeBSD](https://www.freebsd.org/), most software is installed using `pkg`. 
 
 ### Build an area to host files
 
-```bash
+```sh
 mkdir -p /opt/python
 ```
 
 ### Install prerequisite runtimes: python, node, yarn
 
-```bash
-sudo pkg install git python3 curl node12 yarn-node12
-sudo pkg install libxml2 libxslt pkgconf py37-xmlsec py37-cffi py37-ldap
+```sh
+sudo pkg install git python3 curl node21 yarn-node21
+sudo pkg install libxml2 libxslt pkgconf py39-xmlsec
+sudo pkg install mysql81-client openldap26-client
 ```
+
+Note: package of MySQL client may be mysql80-client if you want.
 
 ## Check Out Source Code
 _**Note:**_ Please adjust `/opt/powerdns-admin` to your local web application directory
 
-```bash
+```sh
 git clone https://github.com/PowerDNS-Admin/PowerDNS-Admin.git /opt/powerdns-admin
 cd /opt/powerdns-admin
 ```
@@ -25,21 +28,20 @@ cd /opt/powerdns-admin
 
 Make a virtual environment for python. Activate your python3 environment and install libraries. It's easier to install some python libraries as system packages, so we add the `--system-site-packages` option to pull those in.
 
-> Note: I couldn't get `python-ldap` to install correctly, and I don't need it. I commented out the `python-ldap` line in `requirements.txt` and it all built and installed correctly. If you don't intend to use LDAP authentication, you'll be fine. If you need LDAP authentication, it probably won't work.
+-> Note: xmlsec 1.3.13 does not support xmlsec1 >= 1.3. When it supports xmlsec1 > 1.3, you may build it yourself and remove `--system-site-packages` option. You will need to install `xmlsec1` in such case.
 
-```bash
+```sh
 python3 -m venv /web/python --system-site-packages
 source /web/python/bin/activate
 /web/python/bin/python3 -m pip install --upgrade pip wheel
-# this command comments out python-ldap
-perl -pi -e 's,^python-ldap,\# python-ldap,' requirements.txt 
-pip3 install -r requirements.txt
+# the -C arg options are needed to build python-ldap
+pip3 install -C --build-option=build_ext -C --build-option=--include-dirs=/usr/local/include -C --build-option=--library-dirs=/usr/local/lib -r requirements.txt
 ```
 
 ## Configuring PowerDNS-Admin
 
 NOTE: The default config file is located at `./powerdnsadmin/default_config.py`. If you want to load another one, please set the `FLASK_CONF` environment variable. E.g.
-```bash
+```sh
 cp configs/development.py /opt/powerdns-admin/production.py
 export FLASK_CONF=/opt/powerdns-admin/production.py
 ```
@@ -48,7 +50,7 @@ export FLASK_CONF=/opt/powerdns-admin/production.py
 
 Edit your flask python configuration. Insert values for the database server, user name, password, etc.
 
-```bash
+```sh
 vim $FLASK_CONF
 ```
 
@@ -73,14 +75,14 @@ Be sure to uncomment one of the lines like `SQLALCHEMY_DATABASE_URI`.
 
 ### Initialise the database
 
-```bash
+```sh
 export FLASK_APP=powerdnsadmin/__init__.py
 flask db upgrade
 ```
 
 ### Build web assets
 
-```bash
+```sh
 yarn install --pure-lockfile
 flask assets build
 ```
@@ -89,7 +91,7 @@ flask assets build
 
 Now you can run PowerDNS-Admin by command
 
-```bash
+```sh
 ./run.py
 ```
 
@@ -97,6 +99,59 @@ Open your web browser and go to `http://localhost:9191` to visit PowerDNS-Admin 
 
 ### Running at startup
 
-This is good for testing, but for production usage, you should use gunicorn or uwsgi. See [Running PowerDNS Admin with Systemd, Gunicorn and Nginx](../web-server/Running-PowerDNS-Admin-with-Systemd,-Gunicorn--and--Nginx.md) for instructions.
+This is good for testing, but for production usage, you should use gunicorn or uwsgi. See [Running PowerDNS Admin with Systemd, Gunicorn and Nginx](../web-server/Running-PowerDNS-Admin-with-Systemd-Gunicorn-and-Nginx.md) for instructions.
 
-The right approach long-term is to create a startup script in `/usr/local/etc/rc.d` and enable it through `/etc/rc.conf`.
+Create a startup script `pdnsadmin` in `/usr/local/etc/rc.d`.
+
+```
+#!/bin/sh
+
+# PROVIDE: pdnsadmin
+# REQUIRE: DAEMON pdns
+# KEYWORD: shutdown
+
+#
+# Add the following line to /etc/rc.conf to enable pdnsadmin:
+# pdnsadmin_enable (bool):      Set to "NO" by default.
+#                               Set it to "YES" to enable pdnsadmin.
+#
+
+. /etc/rc.subr
+
+name=pdnsadmin
+desc="PowerDNS Admin web UI daemon"
+rcvar=${name}_enable
+
+load_rc_config ${name}
+
+workdir="/opt/web/powerdns-admin
+command="/web/python/bin/gunicorn"
+pidfile="/var/run/powerdns-admin.pid"
+sockdir="/var/run/powerdns-admin"
+socket="${sockdir}/powerdns-admin.sock"
+
+start_cmd=start_cmd
+stop_cmd='pkill -TERM -U pdns -F ${pidfile}; sleep 3'
+
+pdnsadmin_enable=${pdnsadmin_enable:-NO}
+
+start_cmd()
+{
+        check_startmsgs && echo "Starting ${name}."
+        if [ !-d ${sockdir} ]; then
+            mkdir -p ${sockdir}
+            chown pdns:pdns ${sockdir}
+        fi
+        cd ${workdir} && daemon -f -u pdns -p ${pidfile} ${command} --bind unix:${socket} --log-syslog 'powerdnsadmin:create_app()'
+}
+
+run_rc_command $1
+```
+
+And enable it through `/etc/rc.conf`.
+
+```
+pdnsadmin_enable="YES"
+```
+
+Now, you may start PowerDNS Admin with `service pdnsadmin start`.

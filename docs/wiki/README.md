@@ -9,7 +9,7 @@
 
 - [General (Read this first)](install/General.md)
   - BSD:
-    - [Install on FreeBSD 12.1-RELEASE](install/Running-on-FreeBSD.md)
+    - [Install on FreeBSD 14.0-RELEASE](install/Running-on-FreeBSD.md)
   - Containers:
     - [Install on Docker](install/Running-PowerDNS-Admin-on-Docker.md)
   - Debian:
